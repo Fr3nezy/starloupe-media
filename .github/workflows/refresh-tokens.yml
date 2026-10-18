@@ -1,0 +1,45 @@
+name: Rinnova token Instagram
+
+# I token Instagram scadono dopo 60 giorni: due rinnovi al mese li tengono sempre validi.
+# Il nuovo token viene salvato al posto del vecchio nei secret del repo, grazie al secret GH_PAT.
+on:
+  schedule:
+    - cron: "0 6 1,15 * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rinnova e salva i token
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          REPO: ${{ github.repository }}
+          IG_TOKEN_IT: ${{ secrets.IG_TOKEN_IT }}
+          IG_TOKEN_EN: ${{ secrets.IG_TOKEN_EN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Manca il secret GH_PAT: senza non posso salvare i token rinnovati."
+            exit 1
+          fi
+          for ACC in IT EN; do
+            VAR="IG_TOKEN_$ACC"
+            OLD="${!VAR:-}"
+            if [ -z "$OLD" ]; then
+              echo "$ACC: nessun token configurato, salto."
+              continue
+            fi
+            RES=$(curl -fsS "https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=$OLD")
+            NEW=$(echo "$RES" | jq -r .access_token)
+            if [ -z "$NEW" ] || [ "$NEW" = "null" ]; then
+              echo "::error::$ACC: risposta di rinnovo senza token."
+              exit 1
+            fi
+            echo "::add-mask::$NEW"
+            gh secret set "$VAR" --repo "$REPO" --body "$NEW"
+            DAYS=$(( $(echo "$RES" | jq -r .expires_in) / 86400 ))
+            echo "$ACC: token rinnovato, valido per altri $DAYS giorni."
+          done
